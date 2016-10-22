@@ -2,12 +2,17 @@
 Main script for this hacked-together plugin
 """
 import json
+import os
 import xbmc
+import xbmcaddon
 
-# Constants
+# Constants and contextual variables
+__settings__ = xbmcaddon.Addon(id='script.nodecide')
+__cwd__ = __settings__.getAddonInfo('path')
+LAST_QUEUE_FILE = os.path.join(__cwd__, "resources", "last_queue.json")
+INFILE = os.path.join(__cwd__, "resources", "in.data")
+
 IDEAL_QUEUE_LENGTH = 30  # This works out to ~10 hours of tv if uninterrupted
-LAST_QUEUE_FILE = "resources/last_queue.json"
-INFILE = "resources/in.data"
 
 def execute_log_command(cmd):
     """
@@ -48,7 +53,7 @@ def current_playlist():
         current_playlist_contents = execute_log_command(playlist_contents_cmd)
         return {
             "id": current["playlistid"],
-            "items": current_playlist_contents["result"]["items"]
+            "items": current_playlist_contents["result"].get("items", [])
         }
     return None
 
@@ -64,7 +69,7 @@ def current_item():
             "playerid": active_video_player(),
         }
     }
-    return execute_log_command(current_item_cmd)["id"]
+    return execute_log_command(current_item_cmd)["result"]["item"]["id"]
 
 def get_last_queued_playlist():
     """
@@ -98,7 +103,9 @@ def active_video_player():
         (player for player in players_result["result"] if player["type"] == "video"),
         None
     )
-    return player["playerid"]
+    if player is not None:
+        return player["playerid"]
+    return None
 
 def goto_next(player):
     """
@@ -140,7 +147,7 @@ def get_last_played(item):
         }
     }
     result = execute_log_command(last_played_query)
-    return result["result"]["lastplayed"]
+    return result["result"]["episodedetails"]["lastplayed"]
 
 def seed_last_queued():
     """
@@ -149,7 +156,8 @@ def seed_last_queued():
     ret = []
     with open(INFILE, "r") as in_data:
         for _ in range(IDEAL_QUEUE_LENGTH):
-            ret.append(in_data.readline())
+            ret.append(in_data.readline().rstrip("\n"))
+    xbmc.log("Current length: {}".format(len(ret)), xbmc.LOGDEBUG)
     return ret
 
 def play_and_queue(items, index, use_ids=True):
@@ -162,11 +170,8 @@ def play_and_queue(items, index, use_ids=True):
         "id": "openPlayer",
         "params": {
             "item": {
-                "episodeid" if use_ids else "path": items[index],
+                "episodeid" if use_ids else "file": items[index],
             },
-            "options": {
-                "resume": "true"
-            }
         }
     }
     execute_log_command(play_cmd)
@@ -181,7 +186,7 @@ def play_and_queue(items, index, use_ids=True):
             "params": {
                 "playlistid": playlistid,
                 "item": {
-                    "episodeid" if use_ids else "path": item,
+                    "episodeid" if use_ids else "file": item,
                 }
             }
         } for item in items[index:]
@@ -194,18 +199,26 @@ def trim_active_playlist():
     """
     playlist = current_playlist()
     item = current_item()
-    bulk_remove_cmd = [
-        {
-            "jsonrpc": "2.0",
-            "method": "Playlist.Remove",
-            "id": "removeEp",
-            "params": {
-                "playlistid": playlist["id"],
-                "position": index
-            }
-        } for index in range([item["id"] for item in playlist["items"]].index(item))
-    ]
-    execute_log_command(bulk_remove_cmd)
+    if playlist.get("items") is not None:
+        xbmc.log("item: {}".format(item), xbmc.LOGDEBUG)
+        xbmc.log("playlist['items']: {}".format(playlist["items"]), xbmc.LOGDEBUG)
+        xbmc.log("the thing: {}".format([item["id"] for item in playlist["items"]]), xbmc.LOGDEBUG)
+        bulk_remove_cmd = []
+        for index, item_id in enumerate(playlist["items"]):
+            if item_id == item:
+                break
+            bulk_remove_cmd.append(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "Playlist.Remove",
+                    "id": "removeEp",
+                    "params": {
+                        "playlistid": playlist["id"],
+                        "position": index
+                    }
+                }
+            )
+        execute_log_command(bulk_remove_cmd)
 
 def pad_active_playlist():
     """
@@ -214,8 +227,9 @@ def pad_active_playlist():
     playlist = current_playlist()
     with open(INFILE, "r+") as infile:
         new_paths = []
+        xbmc.log("Current length: {}".format(len(playlist["items"])), xbmc.LOGDEBUG)
         for _ in range(IDEAL_QUEUE_LENGTH - len(playlist["items"])):
-            new_paths.append(infile.readline())
+            new_paths.append(infile.readline().rstrip("\n"))
         infile.seek(0)
         point = 0
         for path in infile:
@@ -234,7 +248,7 @@ def pad_active_playlist():
             "params": {
                 "playlistid": playlist["id"],
                 "item": {
-                    "episodeid": item,
+                    "file": item,
                 }
             }
         } for item in new_paths
@@ -248,6 +262,11 @@ def main():
     currently_viewing = current_playlist()
     last_queued = get_last_queued_playlist()
     active_player = active_video_player()
+    xbmc.log("last_queued hash: {}".format(last_queued["hashed"]), xbmc.LOGDEBUG)
+    xbmc.log("current items: {}".format(currently_viewing["items"]), xbmc.LOGDEBUG)
+    xbmc.log("calc hash: {}".format(hash(
+        (item["id"] for item in currently_viewing["items"])
+    )), xbmc.LOGDEBUG)
     if (
             last_queued.get("hashed", None) == hash(
                 (item["id"] for item in currently_viewing["items"])
@@ -260,11 +279,13 @@ def main():
             play_and_queue(seed_last_queued(), 0, use_ids=False)
         else:
             latest_index = calc_most_recent(last_queued["items"])
-            play_and_queue(last_queued, latest_index)
+            xbmc.log("last_queued: {}".format(last_queued), xbmc.LOGDEBUG)
+            xbmc.log("latest_index: {}".format(latest_index), xbmc.LOGDEBUG)
+            play_and_queue(last_queued, latest_index + 1)
 
     trim_active_playlist()
     pad_active_playlist()
-    save_current_playlist((item["id"] for item in current_playlist()))
+    save_current_playlist((item["id"] for item in current_playlist()["items"]))
 
 if __name__ == '__main__':
     main()
