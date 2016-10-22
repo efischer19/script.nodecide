@@ -1,11 +1,14 @@
 """
 Main script for this hacked-together plugin
 """
-import sys
 import json
 import xbmc
 
-def executeLogCommand(cmd):
+# Constants
+PLAYLIST_CONFIDENCE_NUMBER = 4
+IDEAL_QUEUE_LENGTH = 30  # This works out to ~10 hours of tv if uninterrupted
+
+def execute_log_command(cmd):
     """
     Helper for executing commands, with logging if debug mode on.
     """
@@ -17,7 +20,8 @@ def executeLogCommand(cmd):
 
     return json.loads(raw_resp)
 
-# Unused utility things I'm copying over from my other plugin that don't yet have a home
+"""
+Unused utility things I'm copying over from my other plugin that don't yet have a home
 
     # Play the first item
     playCmd = {
@@ -30,29 +34,21 @@ def executeLogCommand(cmd):
         "method": "Player.Open",
         "id": "openPlayer"
     }
-    playResult = executeLogCommand(playCmd)
+    playResult = execute_log_command(playCmd)
     playlist.remove(playlist[0])
 
     # Get the currently playing playlist from Kodi
-    playlistsCmd = {
-        "jsonrpc": "2.0",
-        "method": "Playlist.GetPlaylists",
-        "id": "getPlaylists"
-    }
-    playlistsResult = executeLogCommand(playlistsCmd)
-    videoPlaylist = next(playlist for playlist in playlistsResult["result"] if playlist["type"] == "video")
-
     # Get the currently active video player from Kodi
     activePlayersCmd = {
         "jsonrpc": "2.0",
         "method": "Player.GetActivePlayers",
         "id": "getActivePlayers"
     }
-    activePlayersResult = executeLogCommand(activePlayersCmd)
+    activePlayersResult = execute_log_command(activePlayersCmd)
     activeVideoPlayer = next(player["playerid"] for player in activePlayersResult["result"] if player["type"] == "video")
 
     # Error out if things aren't going according to plan
-    if not activeVideoPlayer and videoPlaylist:
+    if not activeVideoPlayer and currentVideoPlaylist:
         xbmc.log("error! Could not get a single video player and playlist! Exiting...")
         sys.exit()
 
@@ -63,14 +59,15 @@ def executeLogCommand(cmd):
             "method": "Playlist.Add",
             "id": "queueEp{}".format(item[1]),
             "params": {
-                "playlistid": videoPlaylist["playlistid"],
+                "playlistid": currentVideoPlaylist["playlistid"],
                 "item": {
                     item[0]: item[1]
                 }
             }
         } for item in playlist
     ]
-    addAllEpsResult = executeLogCommand(addAllBatchCmd)
+    addAllEpsResult = execute_log_command(addAllBatchCmd)
+"""
 
 """
 Plans for main method:
@@ -79,10 +76,43 @@ Plans for main method:
         if yes, skip to the next item and ensure queue length
         if no, stop playback, play something, and queue some things
 """
+def main():
+    """
+    Main script method
+    """
+    # Get the currently playing playlist, or None if nothing is playing
+    current_playlists_cmd = {
+        "jsonrpc": "2.0",
+        "method": "Playlist.GetPlaylists",
+        "id": "getCurrentPlaylists"
+    }
+    playlists_result = execute_log_command(current_playlists_cmd)
+    current_playlist = next(
+        (playlist for playlist in playlists_result["result"] if playlist["type"] == "video"),
+        None
+    )
+    if current_playlist:
+        playlist_contents_cmd = {
+            "jsonrpc": "2.0",
+            "method": "Playlist.GetItems",
+            "id": "getPlaylistItems",
+            "params": {
+                "playlistid": current_playlist["playlistid"]
+            }
+        }
+        current_playlist_contents = execute_log_command(playlist_contents_cmd)
+        # DEBUG TIME
+        xbmc.log("playlist items: {}".format(current_playlist_contents["items"]), xbmc.LOGDEBUG)
 
-# Sidebar: I'm never going to enqueue all 1000+ items at once. If I enqueue 30 at once (and ensure that many when advancing episodes), that works out to ~10 hours of not touching anything before the list runs out. If that happens, it's probably time to stop watching TV for a bit anyways.
+    # Now, compare current playlist with what we queued the last time this script ran
+    # If the last few items match, we assume it's still the same playlist
 
 """
+Sidebar: I'm never going to enqueue all 1000+ items at once.
+If I enqueue 30 at once (and ensure that many when advancing episodes), that works out to ~10 hours
+of not touching anything before the list runs out. If that happens, it's probably time to stop
+watching TV for a bit anyways.
+
 Data, all kept as files on disk:
     master reference list, read only. List of file paths, hand-grepped from Kodi-created m3u file
     3 other files, think of them as such:
