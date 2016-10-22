@@ -1,0 +1,2 @@
+v0.0.0	(2016-10-22)
+ - Initial project setup, largely copied from my last plugin

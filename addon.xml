@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="script.nodecide" name="Sitcoms And Chill" version="0.0.1" provider="rootbrewski">
+    <requires>
+        <import addon="xbmc.python" version="2.19.0"/>
+    </requires>
+    <extension point="xbmc.python.script" library="nodecide.py">
+        <provides>executable</provides>
+    </extension>
+    <extension point="xbmc.addon.metadata">
+        <summary lang="en">Eliminate the stress of indecision</summary>
+        <description lang="en">This mega hacky script designed for use with an Amazon Dash for maximum effect</description>
+        <platform>all</platform>
+        <language>en</language>
+        <license>The MIT License (MIT) Copyright (c) 2016 Eric Fischer</license>
+        <source>https://github.com/efischer19</source>
+        <forum></forum>
+        <website></website>
+        <email></email>
+    </extension>
+</addon>
