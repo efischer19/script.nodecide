@@ -120,3 +120,6 @@ Data, all kept as files on disk:
         current: what the script thinks the current list of playing items is
         selected: where I "move" file paths after they've been selected
 """
+
+if __name__ == '__main__':
+    main()
