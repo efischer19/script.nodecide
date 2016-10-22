@@ -20,6 +20,43 @@ def execute_log_command(cmd):
 
     return json.loads(raw_resp)
 
+def current_playlist_hash():
+    """
+    Gets the currently playing video playlist, and returns the hash of the playing items'
+    item_ids in a tuple.
+    """
+    current_playlists_cmd = {
+        "jsonrpc": "2.0",
+        "method": "Playlist.GetPlaylists",
+        "id": "getCurrentPlaylists"
+    }
+    playlists_result = execute_log_command(current_playlists_cmd)
+    current_playlist = next(
+        (playlist for playlist in playlists_result["result"] if playlist["type"] == "video"),
+        None
+    )
+    if current_playlist:
+        playlist_contents_cmd = {
+            "jsonrpc": "2.0",
+            "method": "Playlist.GetItems",
+            "id": "getPlaylistItems",
+            "params": {
+                "playlistid": current_playlist["playlistid"]
+            }
+        }
+        current_playlist_contents = execute_log_command(playlist_contents_cmd)
+        # DEBUG TIME
+        item_ids = (
+            item["id"]
+            for item in current_playlist_contents["result"]["items"]
+            if item["type"] == "episode"
+        )
+        if any(item_ids):
+            ret_hash = hash(item_ids)
+            xbmc.log("playlist items: {}, hash: {}".format(item_ids, ret_hash), xbmc.LOGDEBUG)
+            return ret_hash
+    return None
+
 """
 Unused utility things I'm copying over from my other plugin that don't yet have a home
 
@@ -80,35 +117,8 @@ def main():
     """
     Main script method
     """
-    # Get the currently playing playlist, or None if nothing is playing
-    current_playlists_cmd = {
-        "jsonrpc": "2.0",
-        "method": "Playlist.GetPlaylists",
-        "id": "getCurrentPlaylists"
-    }
-    playlists_result = execute_log_command(current_playlists_cmd)
-    current_playlist = next(
-        (playlist for playlist in playlists_result["result"] if playlist["type"] == "video"),
-        None
-    )
-    if current_playlist:
-        playlist_contents_cmd = {
-            "jsonrpc": "2.0",
-            "method": "Playlist.GetItems",
-            "id": "getPlaylistItems",
-            "params": {
-                "playlistid": current_playlist["playlistid"]
-            }
-        }
-        current_playlist_contents = execute_log_command(playlist_contents_cmd)
-        # DEBUG TIME
-        item_ids = [
-            item["id"]
-            for item in current_playlist_contents["result"]["items"]
-            if item["type"] == "episode"
-        ]
-        xbmc.log("playlist items: {}".format(item_ids), xbmc.LOGDEBUG)
-
+    currently_viewing = current_playlist_hash()
+    #last_queued = latest_queue_hash()
     # Now, compare current playlist with what we queued the last time this script ran
     # If the last few items match, we assume it's still the same playlist
 
