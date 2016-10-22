@@ -5,8 +5,8 @@ import json
 import xbmc
 
 # Constants
-PLAYLIST_CONFIDENCE_NUMBER = 4
 IDEAL_QUEUE_LENGTH = 30  # This works out to ~10 hours of tv if uninterrupted
+LAST_QUEUE_FILE = "resources/last_queue.json"
 
 def execute_log_command(cmd):
     """
@@ -20,10 +20,9 @@ def execute_log_command(cmd):
 
     return json.loads(raw_resp)
 
-def current_playlist_hash():
+def current_playlist():
     """
-    Gets the currently playing video playlist, and returns the hash of the playing items'
-    item_ids in a tuple.
+    Gets the current video playlist.
     """
     current_playlists_cmd = {
         "jsonrpc": "2.0",
@@ -31,110 +30,157 @@ def current_playlist_hash():
         "id": "getCurrentPlaylists"
     }
     playlists_result = execute_log_command(current_playlists_cmd)
-    current_playlist = next(
+    current = next(
         (playlist for playlist in playlists_result["result"] if playlist["type"] == "video"),
         None
     )
-    if current_playlist:
+    if current:
         playlist_contents_cmd = {
             "jsonrpc": "2.0",
             "method": "Playlist.GetItems",
             "id": "getPlaylistItems",
             "params": {
-                "playlistid": current_playlist["playlistid"]
+                "playlistid": current["playlistid"],
+                "properties": ["lastplayed"]
             }
         }
         current_playlist_contents = execute_log_command(playlist_contents_cmd)
-        # DEBUG TIME
-        item_ids = (
-            item["id"]
-            for item in current_playlist_contents["result"]["items"]
-            if item["type"] == "episode"
-        )
-        if any(item_ids):
-            ret_hash = hash(item_ids)
-            xbmc.log("playlist items: {}, hash: {}".format(item_ids, ret_hash), xbmc.LOGDEBUG)
-            return ret_hash
+        return {
+            "id": current["playlistid"],
+            "items": current_playlist_contents["result"]["items"]
+        }
     return None
 
-"""
-Unused utility things I'm copying over from my other plugin that don't yet have a home
+def get_last_queued_playlist():
+    """
+    Gets this script's record of the last queued playlist.
+    """
+    with open(LAST_QUEUE_FILE, "r") as readfile:
+        return json.load(readfile)
 
-    # Play the first item
-    playCmd = {
-        "jsonrpc": "2.0",
-        "params": {
-            "item": {
-                playlist[0][0]: playlist[0][1]
-            },
-        },
-        "method": "Player.Open",
-        "id": "openPlayer"
+def save_current_playlist(items):
+    """
+    Serializes information about the current script-defined playlist to file.
+    """
+    serialized = {
+        "items": list(items),
+        "hashed": hash(items),
     }
-    playResult = execute_log_command(playCmd)
-    playlist.remove(playlist[0])
+    with open(LAST_QUEUE_FILE, "w") as savefile:
+        json.dump(serialized, savefile)
 
-    # Get the currently playing playlist from Kodi
-    # Get the currently active video player from Kodi
-    activePlayersCmd = {
+def active_video_player():
+    """
+    Returns the playerid of the currently active video player, or None.
+    """
+    current_players_cmd = {
         "jsonrpc": "2.0",
         "method": "Player.GetActivePlayers",
-        "id": "getActivePlayers"
+        "id": "getCurrentPlayers"
     }
-    activePlayersResult = execute_log_command(activePlayersCmd)
-    activeVideoPlayer = next(player["playerid"] for player in activePlayersResult["result"] if player["type"] == "video")
+    players_result = execute_log_command(current_players_cmd)
+    player = next(
+        (player for player in players_result["result"] if player["type"] == "video"),
+        None
+    )
+    return player["playerid"]
 
-    # Error out if things aren't going according to plan
-    if not activeVideoPlayer and currentVideoPlaylist:
-        xbmc.log("error! Could not get a single video player and playlist! Exiting...")
-        sys.exit()
+def goto_next(player):
+    """
+    Advances the currently active player to the next item.
+    """
+    goto_next_cmd = {
+        "jsonrpc": "2.0",
+        "method": "Player.GoTo",
+        "id": "gotoNext",
+        "params": {
+            "playerid": player,
+            "to": "next"
+        }
+    }
+    execute_log_command(goto_next_cmd)
 
-    # Add the remainder of our items to the current playlist
-    addAllBatchCmd = [
-        {
-            "jsonrpc": "2.0",
-            "method": "Playlist.Add",
-            "id": "queueEp{}".format(item[1]),
-            "params": {
-                "playlistid": currentVideoPlaylist["playlistid"],
-                "item": {
-                    item[0]: item[1]
-                }
-            }
-        } for item in playlist
+def calc_most_recent(items):
+    """
+    Finds the item that was last played, returning the index in items.
+    """
+    last_played_data = [
+        get_last_played(item)
+        for item in items
     ]
-    addAllEpsResult = execute_log_command(addAllBatchCmd)
-"""
+    latest = max(last_played_data)
+    return last_played_data.index(latest)
 
-"""
-Plans for main method:
-    get the currently plaing list from kodi
-    did this script make that list?
-        if yes, skip to the next item and ensure queue length
-        if no, stop playback, play something, and queue some things
-"""
+def get_last_played(item):
+    """
+    Queries Kodi for lastplayed data for a given item.
+    """
+    last_played_query = {
+        "jsonrpc": "2.0",
+        "method": "VideoLibrary.GetEpisodeDetails",
+        "id": "last_played_{}".format(item),
+        "params": {
+            "episodeid": item,
+            "properties": ["lastplayed"]
+        }
+    }
+    result = execute_log_command(last_played_query)
+    return result["result"]["lastplayed"]
+
+def seed_last_queued():
+    """
+    Seed the queue of script-determined items to play.
+    """
+    raise NotImplementedError()
+
+def play_and_queue(items, index):
+    """
+    Plays items[index] from where it was last stopped, and queues items[index:].
+    """
+    xbmc.log(
+        "in play_and_queue, items: {}, index: {}".format(
+            items, index
+        ), xbmc.LOGDEBUG
+    )
+
+def trim_active_playlist():
+    """
+    Removes all items in the currently active playlist that occur before the current item.
+    """
+    pass  # (Playlist.Remove, using indices and playlistid)
+
+def pad_active_playlist():
+    """
+    Randomly selects new items to fill out the current playlist.
+    """
+    pass
+
 def main():
     """
     Main script method
     """
-    currently_viewing = current_playlist_hash()
-    #last_queued = latest_queue_hash()
-    # Now, compare current playlist with what we queued the last time this script ran
-    # If the last few items match, we assume it's still the same playlist
+    currently_viewing = current_playlist()
+    last_queued = get_last_queued_playlist()
+    active_player = active_video_player()
+    if (
+            last_queued.get("hashed", None) == hash(
+                (item["id"] for item in currently_viewing["items"])
+            )
+            and active_player is not None
+    ):
+        goto_next(active_player)
+    else:
+        if len(last_queued) == 0:
+            last_queued = seed_last_queued()
+            latest_index = -1
+        else:
+            latest_index = calc_most_recent(last_queued["items"])
+        play_and_queue(last_queued, latest_index)
+        currently_viewing = current_playlist()
 
-"""
-Sidebar: I'm never going to enqueue all 1000+ items at once.
-If I enqueue 30 at once (and ensure that many when advancing episodes), that works out to ~10 hours
-of not touching anything before the list runs out. If that happens, it's probably time to stop
-watching TV for a bit anyways.
-
-Data, all kept as files on disk:
-    master reference list, read only. List of file paths, hand-grepped from Kodi-created m3u file
-    3 other files, think of them as such:
-        input: files that have yet to be selected in this pass through the master list
-        current: what the script thinks the current list of playing items is
-        selected: where I "move" file paths after they've been selected
-"""
+    trim_active_playlist()
+    pad_active_playlist()
+    save_current_playlist((item["id"] for item in current_playlist()))
 
 if __name__ == '__main__':
     main()
