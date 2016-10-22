@@ -102,7 +102,12 @@ def main():
         }
         current_playlist_contents = execute_log_command(playlist_contents_cmd)
         # DEBUG TIME
-        xbmc.log("playlist items: {}".format(current_playlist_contents["items"]), xbmc.LOGDEBUG)
+        item_ids = [
+            item["id"]
+            for item in current_playlist_contents["result"]["items"]
+            if item["type"] == "episode"
+        ]
+        xbmc.log("playlist items: {}".format(item_ids), xbmc.LOGDEBUG)
 
     # Now, compare current playlist with what we queued the last time this script ran
     # If the last few items match, we assume it's still the same playlist
