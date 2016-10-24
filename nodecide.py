@@ -281,7 +281,7 @@ def main():
             latest_index = calc_most_recent(last_queued["items"])
             xbmc.log("last_queued: {}".format(last_queued), xbmc.LOGDEBUG)
             xbmc.log("latest_index: {}".format(latest_index), xbmc.LOGDEBUG)
-            play_and_queue(last_queued, latest_index + 1)
+            play_and_queue(last_queued["items"], latest_index + 1)
 
     trim_active_playlist()
     pad_active_playlist()
