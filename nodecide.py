@@ -3,16 +3,18 @@ Main script for this hacked-together plugin
 """
 import json
 import os
+from random import randint
 import xbmc
 import xbmcaddon
 
 # Constants and contextual variables
 __settings__ = xbmcaddon.Addon(id='script.nodecide')
 __cwd__ = __settings__.getAddonInfo('path')
-LAST_QUEUE_FILE = os.path.join(__cwd__, "resources", "last_queue.json")
-INFILE = os.path.join(__cwd__, "resources", "in.data")
+MASTER_INPUT = os.path.join(__cwd__, "resources", "master_ref.data")
+TEST_DATA = os.path.join(__cwd__, "resources", "test.data")
+CURRENT_DATA = os.path.join(__cwd__, "resources", "current.data")
 
-IDEAL_QUEUE_LENGTH = 30  # This works out to ~10 hours of tv if uninterrupted
+IDEAL_QUEUE_LENGTH = 6  # Double Netflix idle time
 
 def execute_log_command(cmd):
     """
@@ -47,7 +49,6 @@ def current_playlist():
             "id": "getPlaylistItems",
             "params": {
                 "playlistid": current["playlistid"],
-                "properties": ["lastplayed"]
             }
         }
         current_playlist_contents = execute_log_command(playlist_contents_cmd)
@@ -56,38 +57,6 @@ def current_playlist():
             "items": current_playlist_contents["result"].get("items", [])
         }
     return None
-
-def current_item():
-    """
-    Returns the id of the item that is currently playing.
-    """
-    current_item_cmd = {
-        "jsonrpc": "2.0",
-        "method": "Player.GetItem",
-        "id": "getItem",
-        "params": {
-            "playerid": active_video_player(),
-        }
-    }
-    return execute_log_command(current_item_cmd)["result"]["item"]["id"]
-
-def get_last_queued_playlist():
-    """
-    Gets this script's record of the last queued playlist.
-    """
-    with open(LAST_QUEUE_FILE, "r") as readfile:
-        return json.load(readfile)
-
-def save_current_playlist(items):
-    """
-    Serializes information about the current script-defined playlist to file.
-    """
-    serialized = {
-        "items": list(items),
-        "hashed": hash(items),
-    }
-    with open(LAST_QUEUE_FILE, "w") as savefile:
-        json.dump(serialized, savefile)
 
 def active_video_player():
     """
@@ -107,10 +76,128 @@ def active_video_player():
         return player["playerid"]
     return None
 
-def goto_next(player):
+def first_run():
     """
-    Advances the currently active player to the next item.
+    Since m3u files save file paths and this script works best with episodeids,
+    we need to convert them. The hacky way to do this is "queue everything, then
+    ask for the current playlist"
     """
+    with open(MASTER_INPUT, "r") as infile:
+        seed = infile.readline()
+        play_cmd = {
+            "jsonrpc": "2.0",
+            "method": "Player.Open",
+            "id": "openPlayer",
+            "params": {
+                "item": {
+                    "file": seed.rstrip("\n")
+                },
+            }
+        }
+        execute_log_command(play_cmd)
+
+        playlistid = current_playlist()["id"]
+        for item in infile:
+            queue_cmd = [
+                {
+                    "jsonrpc": "2.0",
+                    "method": "Playlist.Add",
+                    "id": "queueEp",
+                    "params": {
+                        "playlistid": playlistid,
+                        "item": {
+                            "file": item.rstrip("\n")
+                        }
+                    }
+                }
+            ]
+            execute_log_command(queue_cmd)
+
+    items = current_playlist()["items"]
+    with open(TEST_DATA, "w") as outfile:
+        outfile.write(unicode([item["id"] for item in items]))
+
+def sort_json():
+    with open(TEST_DATA, "r") as infile:
+        data = json.load(infile)
+    data["startlist"] = sorted(data["startlist"])
+    with open(TEST_DATA, "w") as outfile:
+        json.dump(data, outfile)
+
+def load_data():
+    with open(CURRENT_DATA, "r") as infile:
+        data = json.load(infile)
+    return data
+
+def reset_data(data):
+    while data["watched"]:
+        data["to_watch"].append(data["watched"].pop())
+    data["to_watch"] = sorted(data["to_watch"])
+    data["currently_playing"] = []
+    return data
+
+def clear_playlist(data, playlistid):
+    clear_cmd = [
+        {
+            "jsonrpc": "2.0",
+            "method": "Playlist.Clear",
+            "id": "clearPlaylist",
+            "params": {
+                "playlistid": playlistid,
+            }
+        }
+    ]
+    execute_log_command(clear_cmd)
+    data["currently_playing"] = []
+    return data
+
+def add_item(data, playlistid, num_to_add=1):
+    # get a random num_to_add number of items, and add them to the current playlist
+    batch_add_cmd = []
+    for _ in range(num_to_add):
+        randex = randint(0, len(data["to_watch"]))
+        to_add = data["to_watch"].pop(randex)
+        data["currently_playing"].append(to_add)
+        batch_add_cmd.append(
+            {
+                "jsonrpc": "2.0",
+                "method": "Playlist.Add",
+                "id": "queueEp",
+                "params": {
+                    "playlistid": playlistid,
+                    "item": {
+                        "episodeid": to_add,
+                    }
+                }
+            }
+        )
+    execute_log_command(batch_add_cmd)
+    return data
+
+def play_new_queue(data, playlistid):
+    data = clear_playlist(data, playlistid)
+    randex = randint(0, len(data["to_watch"]))
+    to_add = data["to_watch"].pop(randex)
+    play_cmd = {
+        "jsonrpc": "2.0",
+        "method": "Player.Open",
+        "id": "openPlayer",
+        "params": {
+            "item": {
+                "episodeid": to_add,
+            },
+        }
+    }
+    execute_log_command(play_cmd)
+    data["currently_playing"] = [to_add]
+
+    playlistid = current_playlist()["id"]
+
+    data = add_item(data, playlistid, IDEAL_QUEUE_LENGTH - 1)
+    return data
+
+def skip():
+    player = active_video_player()
     goto_next_cmd = {
         "jsonrpc": "2.0",
         "method": "Player.GoTo",
@@ -122,170 +209,36 @@ def goto_next(player):
     }
     execute_log_command(goto_next_cmd)
 
-def calc_most_recent(items):
-    """
-    Finds the item that was last played, returning the index in items.
-    """
-    last_played_data = [
-        get_last_played(item)
-        for item in items
-    ]
-    latest = max(last_played_data)
-    return last_played_data.index(latest)
-
-def get_last_played(item):
-    """
-    Queries Kodi for lastplayed data for a given item.
-    """
-    last_played_query = {
-        "jsonrpc": "2.0",
-        "method": "VideoLibrary.GetEpisodeDetails",
-        "id": "last_played_{}".format(item),
-        "params": {
-            "episodeid": item,
-            "properties": ["lastplayed"]
-        }
-    }
-    result = execute_log_command(last_played_query)
-    return result["result"]["episodedetails"]["lastplayed"]
-
-def seed_last_queued():
-    """
-    Return a list of fie paths
-    """
-    ret = []
-    with open(INFILE, "r") as in_data:
-        for _ in range(IDEAL_QUEUE_LENGTH):
-            ret.append(in_data.readline().rstrip("\n"))
-    xbmc.log("Current length: {}".format(len(ret)), xbmc.LOGDEBUG)
-    return ret
-
-def play_and_queue(items, index, use_ids=True):
-    """
-    Plays items[index] from where it was last stopped, and queues items[index:].
-    """
-    play_cmd = {
-        "jsonrpc": "2.0",
-        "method": "Player.Open",
-        "id": "openPlayer",
-        "params": {
-            "item": {
-                "episodeid" if use_ids else "file": items[index],
-            },
-        }
-    }
-    execute_log_command(play_cmd)
-
-    playlistid = current_playlist()["id"]
-
-    batch_queue_cmd = [
-        {
-            "jsonrpc": "2.0",
-            "method": "Playlist.Add",
-            "id": "queueEp",
-            "params": {
-                "playlistid": playlistid,
-                "item": {
-                    "episodeid" if use_ids else "file": item,
-                }
-            }
-        } for item in items[index:]
-    ]
-    execute_log_command(batch_queue_cmd)
-
-def trim_active_playlist():
-    """
-    Removes all items in the currently active playlist that occur before the current item.
-    """
-    playlist = current_playlist()
-    item = current_item()
-    if playlist.get("items") is not None:
-        xbmc.log("item: {}".format(item), xbmc.LOGDEBUG)
-        xbmc.log("playlist['items']: {}".format(playlist["items"]), xbmc.LOGDEBUG)
-        xbmc.log("the thing: {}".format([item["id"] for item in playlist["items"]]), xbmc.LOGDEBUG)
-        bulk_remove_cmd = []
-        for index, item_id in enumerate(playlist["items"]):
-            if item_id == item:
-                break
-            bulk_remove_cmd.append(
-                {
-                    "jsonrpc": "2.0",
-                    "method": "Playlist.Remove",
-                    "id": "removeEp",
-                    "params": {
-                        "playlistid": playlist["id"],
-                        "position": index
-                    }
-                }
-            )
-        execute_log_command(bulk_remove_cmd)
-
-def pad_active_playlist():
-    """
-    Add items to fill out the current playlist.
-    """
-    playlist = current_playlist()
-    with open(INFILE, "r+") as infile:
-        new_paths = []
-        xbmc.log("Current length: {}".format(len(playlist["items"])), xbmc.LOGDEBUG)
-        for _ in range(IDEAL_QUEUE_LENGTH - len(playlist["items"])):
-            new_paths.append(infile.readline().rstrip("\n"))
-        infile.seek(0)
-        point = 0
-        for path in infile:
-            infile.seek(point)
-            if path in new_paths:
-                infile.write("\n")
-            else:
-                infile.write(path + "\n")
-            point = infile.tell()
-
-    batch_queue_cmd = [
-        {
-            "jsonrpc": "2.0",
-            "method": "Playlist.Add",
-            "id": "queueEp",
-            "params": {
-                "playlistid": playlist["id"],
-                "item": {
-                    "file": item,
-                }
-            }
-        } for item in new_paths
-    ]
-    execute_log_command(batch_queue_cmd)
-
 def main():
     """
     Main script method
     """
-    currently_viewing = current_playlist()
-    last_queued = get_last_queued_playlist()
-    active_player = active_video_player()
-    xbmc.log("last_queued hash: {}".format(last_queued["hashed"]), xbmc.LOGDEBUG)
-    xbmc.log("current items: {}".format(currently_viewing["items"]), xbmc.LOGDEBUG)
-    xbmc.log("calc hash: {}".format(hash(
-        (item["id"] for item in currently_viewing["items"])
-    )), xbmc.LOGDEBUG)
-    if (
-            last_queued.get("hashed", None) == hash(
-                (item["id"] for item in currently_viewing["items"])
-            )
-            and active_player is not None
-    ):
-        goto_next(active_player)
-    else:
-        if len(last_queued) == 0:
-            play_and_queue(seed_last_queued(), 0, use_ids=False)
-        else:
-            latest_index = calc_most_recent(last_queued["items"])
-            xbmc.log("last_queued: {}".format(last_queued), xbmc.LOGDEBUG)
-            xbmc.log("latest_index: {}".format(latest_index), xbmc.LOGDEBUG)
-            play_and_queue(last_queued["items"], latest_index + 1)
+    #first_run()
+    #sort_json()
 
-    trim_active_playlist()
-    pad_active_playlist()
-    save_current_playlist((item["id"] for item in current_playlist()["items"]))
+    data = load_data()
+    playlist = current_playlist()
+    if len(data["to_watch"]) < IDEAL_QUEUE_LENGTH:
+        # reset from scratch
+        data = reset(data)
+        data = play_new_queue(data, playlist["id"])
+
+    else:
+        # Are we currently watching the last thing we queued?
+        current_items = playlist["items"]
+        id_list = sorted([item["id"] for item in current_items])
+        xbmc.log("current: {} - saved: {}".format(id_list, sorted(data["currently_playing"])), xbmc.LOGNOTICE)
+        if id_list and id_list == sorted(data["currently_playing"]):
+            # Add a new item, and skip to the next item in the list
+            data = add_item(data, playlist["id"])
+            skip()
+        else:
+            # Assume something else happened, restart from scratch
+            data = play_new_queue(data, playlist["id"])
+
+    # save updated data
+    with open(CURRENT_DATA, "w") as outfile:
+        json.dump(data, outfile)
 
 if __name__ == '__main__':
     main()
