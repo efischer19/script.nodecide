@@ -235,8 +235,16 @@ def main():
         # Are we currently watching the last thing we queued?
         current_items = playlist["items"]
         id_list = sorted([item["id"] for item in current_items])
-        xbmc.log("current: {} - saved: {}".format(id_list, sorted(data["currently_playing"])), xbmc.LOGNOTICE)
-        if id_list and id_list == sorted(data["currently_playing"]):
+        active = active_video_player() != None
+        xbmc.log(
+            "active: {}, current: {}, saved: {}".format(
+                active,
+                id_list,
+                sorted(data["currently_playing"])
+            ),
+            xbmc.LOGNOTICE
+        )
+        if active and id_list and id_list == sorted(data["currently_playing"]):
             # Add a new item, and skip to the next item in the list
             data = add_item(data, playlist["id"])
             skip()
