@@ -158,6 +158,7 @@ def add_item(data, playlistid, num_to_add=1):
         randex = randint(0, len(data["to_watch"]))
         to_add = data["to_watch"].pop(randex)
         data["currently_playing"].append(to_add)
+        data["watched"].append(to_add)
         batch_add_cmd.append(
             {
                 "jsonrpc": "2.0",
@@ -176,24 +177,19 @@ def add_item(data, playlistid, num_to_add=1):
 
 def play_new_queue(data, playlistid):
     data = clear_playlist(data, playlistid)
-    randex = randint(0, len(data["to_watch"]))
-    to_add = data["to_watch"].pop(randex)
+
+    data = add_item(data, playlistid, IDEAL_QUEUE_LENGTH)
     play_cmd = {
         "jsonrpc": "2.0",
         "method": "Player.Open",
         "id": "openPlayer",
         "params": {
             "item": {
-                "episodeid": to_add,
+                "playlistid": playlistid,
             },
         }
     }
     execute_log_command(play_cmd)
-    data["currently_playing"] = [to_add]
-
-    playlistid = current_playlist()["id"]
-
-    data = add_item(data, playlistid, IDEAL_QUEUE_LENGTH - 1)
     return data
 
 def skip():
