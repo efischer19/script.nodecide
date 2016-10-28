@@ -1,0 +1,2 @@
+# TO CREATE THIS FILE, CREATE A PLAYLIST IN KODI, THEN USE THIS COMMAND:
+# grep -v "#" <playlist>.m3u | sort > master_ref.data
