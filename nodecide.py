@@ -205,6 +205,18 @@ def skip():
     }
     execute_log_command(goto_next_cmd)
 
+def fullscreen():
+    fullscreen_cmd = {
+        "jsonrpc": "2.0",
+        "method": "GUI.SetFullscreen",
+        "id": "fullscreen",
+        "params": {
+            "fullscreen": True
+        }
+    }
+    execute_log_command(fullscreen_cmd)
+
+
 def main():
     """
     Main script method
@@ -231,6 +243,8 @@ def main():
         else:
             # Assume something else happened, restart from scratch
             data = play_new_queue(data, playlist["id"])
+
+    fullscreen()
 
     # save updated data
     with open(CURRENT_DATA, "w") as outfile:
